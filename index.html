@@ -1,0 +1,271 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Calculadora de Insulinoterapia Perioperatória</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <style>
+        body {
+            font-family: 'Inter', sans-serif;
+        }
+        /* Custom focus styles for better accessibility */
+        .focusable:focus {
+            outline: none;
+            box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.5);
+        }
+        .focusable-radio:focus-within {
+             outline: none;
+            box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.5);
+            border-radius: 0.5rem;
+        }
+    </style>
+</head>
+<body class="bg-gray-100 flex items-center justify-center min-h-screen p-4">
+
+    <div class="w-full max-w-md bg-white rounded-2xl shadow-lg p-6 md:p-8">
+        
+        <header class="text-center mb-6">
+            <h1 class="text-2xl font-bold text-gray-800">Calculadora de Insulina</h1>
+            <p class="text-gray-500 mt-1">Terapia para pacientes cirúrgicos</p>
+        </header>
+
+        <div class="space-y-6">
+            <!-- Current Blood Glucose Input -->
+            <div>
+                <label for="glicemia-atual" class="block text-sm font-medium text-gray-700 mb-2">Glicemia Capilar Atual (mg/dL)</label>
+                <input type="number" id="glicemia-atual" placeholder="Ex: 250" class="focusable w-full px-4 py-3 text-lg border-gray-300 rounded-lg shadow-sm transition duration-150 ease-in-out focus:ring-2 focus:ring-blue-500 focus:border-blue-500">
+            </div>
+            
+            <!-- Previous Blood Glucose Input -->
+            <div>
+                <label for="glicemia-anterior" class="block text-sm font-medium text-gray-700 mb-2">Glicemia Anterior (mg/dL)</label>
+                <input type="number" id="glicemia-anterior" placeholder="Opcional (ex: 210)" class="focusable w-full px-4 py-3 text-lg border-gray-300 rounded-lg shadow-sm transition duration-150 ease-in-out focus:ring-2 focus:ring-blue-500 focus:border-blue-500">
+            </div>
+
+            <!-- Protocol Mode Selection -->
+            <fieldset>
+                <legend class="block text-sm font-medium text-gray-700 mb-2">Modo do Protocolo</legend>
+                <div id="protocol-mode" class="focusable-radio grid grid-cols-2 gap-2 bg-gray-100 p-1 rounded-lg">
+                    <div>
+                        <input type="radio" name="mode" value="padrao" id="mode-padrao" class="sr-only" checked>
+                        <label for="mode-padrao" class="w-full text-center block cursor-pointer rounded-md p-3 font-semibold text-gray-600 transition-colors duration-200">
+                            Padrão
+                        </label>
+                    </div>
+                    <div>
+                        <input type="radio" name="mode" value="cec" id="mode-cec" class="sr-only">
+                        <label for="mode-cec" class="w-full text-center block cursor-pointer rounded-md p-3 font-semibold text-gray-600 transition-colors duration-200">
+                            CEC
+                        </label>
+                    </div>
+                </div>
+            </fieldset>
+
+            <!-- Calculate Button -->
+            <button id="calculate-btn" class="focusable w-full bg-blue-600 text-white font-bold py-3 px-4 rounded-lg shadow-md hover:bg-blue-700 transition-all duration-200 ease-in-out transform hover:scale-105">
+                Calcular
+            </button>
+        </div>
+
+        <!-- Result Display -->
+        <div id="result-container" class="mt-8 pt-6 border-t border-gray-200 text-center hidden">
+            <!-- Infusion and Bolus Flex Container -->
+            <div class="flex justify-around items-start">
+                <!-- Continuous Infusion -->
+                <div class="px-2">
+                    <p class="text-sm font-medium text-gray-500">Infusão Contínua</p>
+                    <p id="infusion-rate" class="text-5xl font-bold text-blue-600">2 UI/h</p>
+                </div>
+                <!-- Bolus Dose -->
+                <div id="bolus-section" class="px-2 hidden">
+                    <p class="text-sm font-medium text-gray-500">Bolus Sugerido</p>
+                    <p id="bolus-dose" class="text-5xl font-bold text-orange-500">4 UI</p>
+                </div>
+            </div>
+
+            <p id="adjustment-info" class="text-sm text-gray-600 mt-2 mb-4 h-5"></p> <!-- Placeholder for adjustment info -->
+            <div id="alert-message" class="mt-4 p-4 rounded-lg text-sm">
+                <!-- Alert messages will be injected here -->
+            </div>
+        </div>
+        
+        <!-- Disclaimer -->
+        <footer class="mt-8 text-center">
+            <p class="text-xs text-gray-400">
+                <strong>Atenção:</strong> Esta ferramenta é um auxílio e não substitui o julgamento clínico. Sempre siga os protocolos da sua instituição.
+            </p>
+        </footer>
+
+    </div>
+
+    <script>
+        // DOM Element References
+        const glicemiaAtualInput = document.getElementById('glicemia-atual');
+        const glicemiaAnteriorInput = document.getElementById('glicemia-anterior');
+        const calculateBtn = document.getElementById('calculate-btn');
+        const resultContainer = document.getElementById('result-container');
+        const infusionRateEl = document.getElementById('infusion-rate');
+        const bolusSection = document.getElementById('bolus-section');
+        const bolusDoseEl = document.getElementById('bolus-dose');
+        const adjustmentInfoEl = document.getElementById('adjustment-info');
+        const alertMessageEl = document.getElementById('alert-message');
+        const protocolModeContainer = document.getElementById('protocol-mode');
+        const radioLabels = protocolModeContainer.querySelectorAll('label');
+
+        /**
+         * Updates the visual state of the radio button labels to show which is selected.
+         */
+        function updateRadioSelection() {
+            const selectedRadio = document.querySelector('input[name="mode"]:checked');
+            radioLabels.forEach(label => {
+                if (label.htmlFor === selectedRadio.id) {
+                    label.classList.add('bg-white', 'text-blue-600', 'shadow');
+                    label.classList.remove('text-gray-600');
+                } else {
+                    label.classList.remove('bg-white', 'text-blue-600', 'shadow');
+                    label.classList.add('text-gray-600');
+                }
+            });
+        }
+
+        /**
+         * Calculates the insulin infusion rate and bolus based on blood glucose.
+         * @returns {object} An object containing the rate, bolus, alert message, and adjustment info.
+         */
+        function calculateInsulin(glicemiaAtual, glicemiaAnterior, mode) {
+            let baseRate = 0;
+            let bolus = 0;
+            let alert = { text: '', type: 'info' };
+            let adjustmentMessage = '';
+
+            const scales = {
+                padrao: { levels: [[140, 0], [180, 1], [220, 2], [260, 3], [300, 4]], highRate: 5 },
+                cec: { levels: [[140, 0.5], [180, 2], [220, 4], [260, 6], [300, 8]], highRate: 10 }
+            };
+            
+            const selectedScale = scales[mode];
+
+            // 1. Handle Hypoglycemia (overrides everything)
+            if (glicemiaAtual < 70) {
+                return {
+                    rate: 0, bolus: 0,
+                    alert: { text: '<strong>Hipoglicemia!</strong> Suspender infusão. Administrar Glicose 50% 50mL. Repetir glicemia em 15 min.', type: 'danger' },
+                    adjustmentMessage: 'Infusão suspensa'
+                };
+            }
+
+            // 2. Calculate Base Rate
+            if (glicemiaAtual <= selectedScale.levels[0][0]) {
+                baseRate = selectedScale.levels[0][1];
+                alert = { text: 'Glicemia dentro do alvo. Manter monitorização.', type: 'success' };
+            } else {
+                let found = false;
+                for (let i = 1; i < selectedScale.levels.length; i++) {
+                    if (glicemiaAtual <= selectedScale.levels[i][0]) {
+                        baseRate = selectedScale.levels[i][1];
+                        found = true;
+                        break;
+                    }
+                }
+                if (!found) { baseRate = selectedScale.highRate; }
+            }
+
+            // 3. Calculate Bolus for significant hyperglycemia
+            if (glicemiaAtual > 220) {
+                if (glicemiaAtual <= 260) { bolus = 2; } 
+                else if (glicemiaAtual <= 300) { bolus = 3; } 
+                else { bolus = 4; }
+                alert = { text: 'Glicemia elevada. Administrar bolus e manter infusão. Reavaliar em 30-60 min.', type: 'warning' };
+            }
+
+            // 4. Calculate Adjustment based on trend
+            let adjustment = 0;
+            if (glicemiaAnterior && glicemiaAnterior > 0) {
+                const delta = glicemiaAtual - glicemiaAnterior;
+                if (delta > 80) { adjustment = 2; adjustmentMessage = 'Ajuste (+2 UI/h): Aumento rápido'; } 
+                else if (delta > 40) { adjustment = 1; adjustmentMessage = 'Ajuste (+1 UI/h): Em elevação'; } 
+                else if (delta < -80) { adjustment = -2; adjustmentMessage = 'Ajuste (-2 UI/h): Queda rápida'; } 
+                else if (delta < -40) { adjustment = -1; adjustmentMessage = 'Ajuste (-1 UI/h): Em queda'; }
+                else { adjustmentMessage = 'Tendência estável'; }
+            }
+
+            // 5. Calculate Final Rate
+            const finalRate = Math.max(0, baseRate + adjustment);
+
+            return { rate: finalRate, bolus, alert, adjustmentMessage };
+        }
+
+        /**
+         * Displays the calculation results in the UI.
+         */
+        function displayResult(result) {
+            infusionRateEl.textContent = `${result.rate} UI/h`;
+            adjustmentInfoEl.textContent = result.adjustmentMessage;
+            alertMessageEl.innerHTML = result.alert.text;
+
+            // Display bolus section if a bolus is recommended
+            if (result.bolus > 0) {
+                bolusDoseEl.textContent = `${result.bolus} UI`;
+                bolusSection.classList.remove('hidden');
+            } else {
+                bolusSection.classList.add('hidden');
+            }
+
+            // Set color for adjustment message
+            adjustmentInfoEl.classList.remove('text-green-600', 'text-red-600', 'text-gray-600');
+            if (result.adjustmentMessage.includes('+')) { adjustmentInfoEl.classList.add('text-red-600'); } 
+            else if (result.adjustmentMessage.includes('-')) { adjustmentInfoEl.classList.add('text-green-600'); } 
+            else { adjustmentInfoEl.classList.add('text-gray-600'); }
+
+            // Reset and apply alert classes
+            alertMessageEl.className = 'mt-4 p-4 rounded-lg text-sm';
+            switch (result.alert.type) {
+                case 'danger': alertMessageEl.classList.add('bg-red-100', 'text-red-800'); break;
+                case 'warning': alertMessageEl.classList.add('bg-yellow-100', 'text-yellow-800'); break;
+                case 'success': alertMessageEl.classList.add('bg-green-100', 'text-green-800'); break;
+                default: alertMessageEl.classList.add('bg-blue-100', 'text-blue-800');
+            }
+            
+            resultContainer.classList.remove('hidden');
+        }
+
+        /**
+         * Main handler for the calculate button click.
+         */
+        function handleCalculation() {
+            const glicemiaAtualValue = parseFloat(glicemiaAtualInput.value);
+            const glicemiaAnteriorValue = parseFloat(glicemiaAnteriorInput.value) || null;
+
+            if (isNaN(glicemiaAtualValue) || glicemiaAtualValue <= 0) {
+                displayResult({
+                    rate: '---', bolus: 0,
+                    alert: { text: 'Por favor, insira um valor de glicemia ATUAL válido.', type: 'danger' },
+                    adjustmentMessage: ''
+                });
+                infusionRateEl.textContent = 'Erro';
+                return;
+            }
+
+            const selectedMode = document.querySelector('input[name="mode"]:checked').value;
+            const result = calculateInsulin(glicemiaAtualValue, glicemiaAnteriorValue, selectedMode);
+            displayResult(result);
+        }
+
+        // Event Listeners
+        calculateBtn.addEventListener('click', handleCalculation);
+        glicemiaAtualInput.addEventListener('keydown', (e) => { if (e.key === 'Enter') handleCalculation(); });
+        glicemiaAnteriorInput.addEventListener('keydown', (e) => { if (e.key === 'Enter') handleCalculation(); });
+        protocolModeContainer.addEventListener('change', updateRadioSelection);
+
+        // Initial setup
+        document.addEventListener('DOMContentLoaded', () => {
+            updateRadioSelection();
+        });
+
+    </script>
+</body>
+</html>
