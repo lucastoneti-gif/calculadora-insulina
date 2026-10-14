@@ -98,6 +98,12 @@
             <p class="text-xs text-gray-400">
                 <strong>Atenção:</strong> Esta ferramenta é um auxílio e não substitui o julgamento clínico. Sempre siga os protocolos da sua instituição.
             </p>
+            <p class="text-xs text-gray-400 mt-2">
+                Durante a infusão: glicemia de 1/1 h, controle de potássio sérico e soro com glicose se o paciente estiver em jejum.
+            </p>
+            <p class="text-xs text-gray-400 mt-2">
+                Alvo 140–180 mg/dL: ADA (Standards of Care, cuidado hospitalar), STS (Lazar 2009), NICE-SUGAR (2009), GLUCO-CABG (2015).
+            </p>
         </footer>
 
     </div>
@@ -105,6 +111,11 @@
     <script>
         // Upper reading limit of most capillary glucose meters (mg/dL)
         const GLICEMIA_MAX = 600;
+        // Hypoglycemia threshold (ADA level 1) and minimum glucose to keep IV insulin running
+        const HIPO_LIMITE = 70;
+        const INSULINA_MIN = 100;
+        // Target range on IV insulin for critically ill/cardiac surgery patients (ADA, STS)
+        const ALVO = { min: 140, max: 180 };
 
         // DOM Element References
         const glicemiaAtualInput = document.getElementById('glicemia-atual');
@@ -145,53 +156,51 @@
             let alert = { text: '', type: 'info' };
             let adjustmentMessage = '';
 
+            // Rates (UI/h) by glucose band; upper bound of each band in mg/dL
             const scales = {
                 padrao: { levels: [[140, 0], [180, 1], [220, 2], [260, 3], [300, 4]], highRate: 5 },
                 cec: { levels: [[140, 0.5], [180, 2], [220, 4], [260, 6], [300, 8]], highRate: 10 }
             };
             
             const selectedScale = scales[mode];
+            const cecNote = mode === 'cec' ? ' Ao reaquecer/sair da CEC, passar para o modo Padrão.' : '';
 
-            // 1. Handle Hypoglycemia (overrides everything)
-            if (glicemiaAtual < 70) {
+            // 1. Hypoglycemia (overrides everything); D50 dose graded by severity
+            if (glicemiaAtual < HIPO_LIMITE) {
+                const dose = glicemiaAtual <= 40 ? '50 mL (25 g)' : '25 mL (12,5 g)';
                 return {
                     rate: 0, bolus: 0,
-                    alert: { text: '<strong>Hipoglicemia!</strong> Suspender infusão. Administrar Glicose 50% 50mL. Repetir glicemia em 15 min.', type: 'danger' },
+                    alert: { text: `<strong>Hipoglicemia!</strong> Suspender infusão. Administrar Glicose 50% ${dose} IV. Repetir glicemia em 15 min. Ao retomar a infusão, usar taxa menor que a anterior.`, type: 'danger' },
                     adjustmentMessage: 'Infusão suspensa'
                 };
             }
 
-            // 2. Calculate Base Rate
-            if (glicemiaAtual <= selectedScale.levels[0][0]) {
-                baseRate = selectedScale.levels[0][1];
-                alert = { text: 'Glicemia dentro do alvo. Manter monitorização.', type: 'success' };
+            // 2. Below 100 mg/dL on IV insulin: hold infusion to prevent hypoglycemia
+            if (glicemiaAtual < INSULINA_MIN) {
+                return {
+                    rate: 0, bolus: 0,
+                    alert: { text: `<strong>Glicemia &lt; ${INSULINA_MIN} mg/dL.</strong> Risco de hipoglicemia: suspender infusão e repetir glicemia em 30 min.`, type: 'warning' },
+                    adjustmentMessage: 'Infusão suspensa'
+                };
+            }
+
+            // 3. Base rate from the scale
+            const band = selectedScale.levels.find(([limite]) => glicemiaAtual <= limite);
+            baseRate = band ? band[1] : selectedScale.highRate;
+
+            if (glicemiaAtual <= ALVO.min) {
+                alert = { text: `Glicemia no limite inferior ou abaixo do alvo (${ALVO.min}–${ALVO.max} mg/dL). Glicemia de 1/1 h.`, type: 'info' };
+            } else if (glicemiaAtual <= ALVO.max) {
+                alert = { text: `Glicemia no alvo (${ALVO.min}–${ALVO.max} mg/dL). Manter infusão e glicemia de 1/1 h.`, type: 'success' };
             } else {
-                let found = false;
-                for (let i = 1; i < selectedScale.levels.length; i++) {
-                    if (glicemiaAtual <= selectedScale.levels[i][0]) {
-                        baseRate = selectedScale.levels[i][1];
-                        found = true;
-                        break;
-                    }
-                }
-                if (!found) { baseRate = selectedScale.highRate; }
+                alert = { text: 'Glicemia acima do alvo. Manter infusão e glicemia de 1/1 h.', type: 'info' };
             }
 
-            // 3. Calculate Bolus for significant hyperglycemia
-            if (glicemiaAtual > 220) {
-                if (glicemiaAtual <= 260) { bolus = 2; } 
-                else if (glicemiaAtual <= 300) { bolus = 3; } 
-                else { bolus = 4; }
-                alert = { text: 'Glicemia elevada. Administrar bolus e manter infusão. Reavaliar em 30-60 min.', type: 'warning' };
-            }
-
-            // 4. Calculate Adjustment based on trend
-            // Within target, a rising trend does not increase the rate (only reductions apply)
-            const inTarget = glicemiaAtual <= selectedScale.levels[0][0];
+            // 4. Trend: within or below target, a rising trend does not increase the rate
+            const delta = glicemiaAnterior ? glicemiaAtual - glicemiaAnterior : null;
             let adjustment = 0;
-            if (glicemiaAnterior && glicemiaAnterior > 0) {
-                const delta = glicemiaAtual - glicemiaAnterior;
-                if (delta > 40 && inTarget) { adjustmentMessage = 'Em elevação (sem ajuste: glicemia no alvo)'; }
+            if (delta !== null) {
+                if (delta > 40 && glicemiaAtual <= ALVO.min) { adjustmentMessage = 'Em elevação (sem ajuste: glicemia abaixo do alvo)'; }
                 else if (delta > 80) { adjustment = 2; adjustmentMessage = 'Ajuste (+2 UI/h): Aumento rápido'; }
                 else if (delta > 40) { adjustment = 1; adjustmentMessage = 'Ajuste (+1 UI/h): Em elevação'; }
                 else if (delta < -80) { adjustment = -2; adjustmentMessage = 'Ajuste (-2 UI/h): Queda rápida'; }
@@ -199,7 +208,21 @@
                 else { adjustmentMessage = 'Tendência estável'; }
             }
 
-            // 5. Calculate Final Rate
+            // 5. Bolus for significant hyperglycemia, only if glucose is not falling
+            if (glicemiaAtual > 220) {
+                if (delta !== null && delta < 0) {
+                    alert = { text: 'Glicemia elevada, porém em queda: bolus não indicado. Manter infusão e reavaliar em 1 h.', type: 'warning' };
+                } else {
+                    if (glicemiaAtual <= 260) { bolus = 2; }
+                    else if (glicemiaAtual <= 300) { bolus = 3; }
+                    else { bolus = 4; }
+                    alert = { text: 'Glicemia elevada. Administrar bolus e manter infusão. Reavaliar em 30-60 min.', type: 'warning' };
+                }
+            }
+
+            alert.text += cecNote;
+
+            // 6. Final rate
             const finalRate = Math.max(0, baseRate + adjustment);
 
             return { rate: finalRate, bolus, alert, adjustmentMessage };
