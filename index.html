@@ -37,13 +37,13 @@
             <!-- Current Blood Glucose Input -->
             <div>
                 <label for="glicemia-atual" class="block text-sm font-medium text-gray-700 mb-2">Glicemia Capilar Atual (mg/dL)</label>
-                <input type="number" id="glicemia-atual" placeholder="Ex: 250" class="focusable w-full px-4 py-3 text-lg border-gray-300 rounded-lg shadow-sm transition duration-150 ease-in-out focus:ring-2 focus:ring-blue-500 focus:border-blue-500">
+                <input type="number" id="glicemia-atual" min="1" max="600" placeholder="Ex: 250" class="focusable w-full px-4 py-3 text-lg border-gray-300 rounded-lg shadow-sm transition duration-150 ease-in-out focus:ring-2 focus:ring-blue-500 focus:border-blue-500">
             </div>
             
             <!-- Previous Blood Glucose Input -->
             <div>
                 <label for="glicemia-anterior" class="block text-sm font-medium text-gray-700 mb-2">Glicemia Anterior (mg/dL)</label>
-                <input type="number" id="glicemia-anterior" placeholder="Opcional (ex: 210)" class="focusable w-full px-4 py-3 text-lg border-gray-300 rounded-lg shadow-sm transition duration-150 ease-in-out focus:ring-2 focus:ring-blue-500 focus:border-blue-500">
+                <input type="number" id="glicemia-anterior" min="1" max="600" placeholder="Opcional (ex: 210)" class="focusable w-full px-4 py-3 text-lg border-gray-300 rounded-lg shadow-sm transition duration-150 ease-in-out focus:ring-2 focus:ring-blue-500 focus:border-blue-500">
             </div>
 
             <!-- Protocol Mode Selection -->
@@ -103,6 +103,9 @@
     </div>
 
     <script>
+        // Upper reading limit of most capillary glucose meters (mg/dL)
+        const GLICEMIA_MAX = 600;
+
         // DOM Element References
         const glicemiaAtualInput = document.getElementById('glicemia-atual');
         const glicemiaAnteriorInput = document.getElementById('glicemia-anterior');
@@ -183,12 +186,15 @@
             }
 
             // 4. Calculate Adjustment based on trend
+            // Within target, a rising trend does not increase the rate (only reductions apply)
+            const inTarget = glicemiaAtual <= selectedScale.levels[0][0];
             let adjustment = 0;
             if (glicemiaAnterior && glicemiaAnterior > 0) {
                 const delta = glicemiaAtual - glicemiaAnterior;
-                if (delta > 80) { adjustment = 2; adjustmentMessage = 'Ajuste (+2 UI/h): Aumento rápido'; } 
-                else if (delta > 40) { adjustment = 1; adjustmentMessage = 'Ajuste (+1 UI/h): Em elevação'; } 
-                else if (delta < -80) { adjustment = -2; adjustmentMessage = 'Ajuste (-2 UI/h): Queda rápida'; } 
+                if (delta > 40 && inTarget) { adjustmentMessage = 'Em elevação (sem ajuste: glicemia no alvo)'; }
+                else if (delta > 80) { adjustment = 2; adjustmentMessage = 'Ajuste (+2 UI/h): Aumento rápido'; }
+                else if (delta > 40) { adjustment = 1; adjustmentMessage = 'Ajuste (+1 UI/h): Em elevação'; }
+                else if (delta < -80) { adjustment = -2; adjustmentMessage = 'Ajuste (-2 UI/h): Queda rápida'; }
                 else if (delta < -40) { adjustment = -1; adjustmentMessage = 'Ajuste (-1 UI/h): Em queda'; }
                 else { adjustmentMessage = 'Tendência estável'; }
             }
@@ -221,8 +227,9 @@
             else if (result.adjustmentMessage.includes('-')) { adjustmentInfoEl.classList.add('text-green-600'); } 
             else { adjustmentInfoEl.classList.add('text-gray-600'); }
 
-            // Reset and apply alert classes
+            // Reset and apply alert classes (hidden when there is no message)
             alertMessageEl.className = 'mt-4 p-4 rounded-lg text-sm';
+            if (!result.alert.text) { alertMessageEl.classList.add('hidden'); }
             switch (result.alert.type) {
                 case 'danger': alertMessageEl.classList.add('bg-red-100', 'text-red-800'); break;
                 case 'warning': alertMessageEl.classList.add('bg-yellow-100', 'text-yellow-800'); break;
@@ -236,17 +243,30 @@
         /**
          * Main handler for the calculate button click.
          */
+        function displayError(message) {
+            displayResult({
+                rate: '---', bolus: 0,
+                alert: { text: message, type: 'danger' },
+                adjustmentMessage: ''
+            });
+            infusionRateEl.textContent = 'Erro';
+        }
+
         function handleCalculation() {
             const glicemiaAtualValue = parseFloat(glicemiaAtualInput.value);
-            const glicemiaAnteriorValue = parseFloat(glicemiaAnteriorInput.value) || null;
+            const anteriorPreenchida = glicemiaAnteriorInput.value.trim() !== '';
+            const glicemiaAnteriorValue = anteriorPreenchida ? parseFloat(glicemiaAnteriorInput.value) : null;
 
             if (isNaN(glicemiaAtualValue) || glicemiaAtualValue <= 0) {
-                displayResult({
-                    rate: '---', bolus: 0,
-                    alert: { text: 'Por favor, insira um valor de glicemia ATUAL válido.', type: 'danger' },
-                    adjustmentMessage: ''
-                });
-                infusionRateEl.textContent = 'Erro';
+                displayError('Por favor, insira um valor de glicemia ATUAL válido.');
+                return;
+            }
+            if (glicemiaAtualValue > GLICEMIA_MAX) {
+                displayError(`Glicemia ATUAL acima de ${GLICEMIA_MAX} mg/dL. Verifique a digitação; se o glicosímetro indicar "HI", confirmar com glicemia laboratorial.`);
+                return;
+            }
+            if (anteriorPreenchida && (isNaN(glicemiaAnteriorValue) || glicemiaAnteriorValue <= 0 || glicemiaAnteriorValue > GLICEMIA_MAX)) {
+                displayError(`Glicemia ANTERIOR inválida. Informe um valor entre 1 e ${GLICEMIA_MAX} mg/dL ou deixe o campo em branco.`);
                 return;
             }
 
