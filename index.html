@@ -46,6 +46,12 @@
                 <input type="number" id="glicemia-anterior" min="1" max="600" placeholder="Opcional (ex: 210)" class="focusable w-full px-4 py-3 text-lg border-gray-300 rounded-lg shadow-sm transition duration-150 ease-in-out focus:ring-2 focus:ring-blue-500 focus:border-blue-500">
             </div>
 
+            <!-- Interval Between Measurements Input -->
+            <div>
+                <label for="intervalo" class="block text-sm font-medium text-gray-700 mb-2">Tempo desde a Glicemia Anterior (min)</label>
+                <input type="number" id="intervalo" min="1" max="1440" placeholder="Obrigatório se houver glicemia anterior (ex: 60)" class="focusable w-full px-4 py-3 text-lg border-gray-300 rounded-lg shadow-sm transition duration-150 ease-in-out focus:ring-2 focus:ring-blue-500 focus:border-blue-500">
+            </div>
+
             <!-- Protocol Mode Selection -->
             <fieldset>
                 <legend class="block text-sm font-medium text-gray-700 mb-2">Modo do Protocolo</legend>
@@ -116,10 +122,13 @@
         const INSULINA_MIN = 100;
         // Target range on IV insulin for critically ill/cardiac surgery patients (ADA, STS)
         const ALVO = { min: 140, max: 180 };
+        // Trend is computed per hour, only for intervals between 30 min and 4 h
+        const TENDENCIA_INTERVALO = { min: 30, max: 240 };
 
         // DOM Element References
         const glicemiaAtualInput = document.getElementById('glicemia-atual');
         const glicemiaAnteriorInput = document.getElementById('glicemia-anterior');
+        const intervaloInput = document.getElementById('intervalo');
         const calculateBtn = document.getElementById('calculate-btn');
         const resultContainer = document.getElementById('result-container');
         const infusionRateEl = document.getElementById('infusion-rate');
@@ -150,7 +159,7 @@
          * Calculates the insulin infusion rate and bolus based on blood glucose.
          * @returns {object} An object containing the rate, bolus, alert message, and adjustment info.
          */
-        function calculateInsulin(glicemiaAtual, glicemiaAnterior, mode) {
+        function calculateInsulin(glicemiaAtual, glicemiaAnterior, intervaloMin, mode) {
             let baseRate = 0;
             let bolus = 0;
             let alert = { text: '', type: 'info' };
@@ -159,7 +168,7 @@
             // Rates (UI/h) by glucose band; upper bound of each band in mg/dL
             const scales = {
                 padrao: { levels: [[140, 0], [180, 1], [220, 2], [260, 3], [300, 4]], highRate: 5 },
-                cec: { levels: [[140, 0.5], [180, 2], [220, 4], [260, 6], [300, 8]], highRate: 10 }
+                cec: { levels: [[140, 0], [180, 2], [220, 4], [260, 6], [300, 8]], highRate: 10 }
             };
             
             const selectedScale = scales[mode];
@@ -196,21 +205,28 @@
                 alert = { text: 'Glicemia acima do alvo. Manter infusão e glicemia de 1/1 h.', type: 'info' };
             }
 
-            // 4. Trend: within or below target, a rising trend does not increase the rate
-            const delta = glicemiaAnterior ? glicemiaAtual - glicemiaAnterior : null;
+            // 4. Trend in mg/dL per hour. A rise does not increase the rate when glucose is
+            // at/below target or recovering from a low value (infusion held or dextrose given)
             let adjustment = 0;
-            if (delta !== null) {
-                if (delta > 40 && glicemiaAtual <= ALVO.min) { adjustmentMessage = 'Em elevação (sem ajuste: glicemia abaixo do alvo)'; }
-                else if (delta > 80) { adjustment = 2; adjustmentMessage = 'Ajuste (+2 UI/h): Aumento rápido'; }
-                else if (delta > 40) { adjustment = 1; adjustmentMessage = 'Ajuste (+1 UI/h): Em elevação'; }
-                else if (delta < -80) { adjustment = -2; adjustmentMessage = 'Ajuste (-2 UI/h): Queda rápida'; }
-                else if (delta < -40) { adjustment = -1; adjustmentMessage = 'Ajuste (-1 UI/h): Em queda'; }
-                else { adjustmentMessage = 'Tendência estável'; }
+            if (glicemiaAnterior !== null) {
+                if (intervaloMin < TENDENCIA_INTERVALO.min || intervaloMin > TENDENCIA_INTERVALO.max) {
+                    adjustmentMessage = 'Tendência não aplicada: intervalo fora de 30 min a 4 h';
+                } else {
+                    const deltaHora = Math.round((glicemiaAtual - glicemiaAnterior) * 60 / intervaloMin);
+                    const variacao = `${deltaHora > 0 ? '+' : ''}${deltaHora} mg/dL/h`;
+                    if (deltaHora > 40 && glicemiaAtual <= ALVO.min) { adjustmentMessage = `Em elevação, ${variacao} (sem ajuste: glicemia abaixo do alvo)`; }
+                    else if (deltaHora > 40 && glicemiaAnterior < INSULINA_MIN) { adjustmentMessage = `Em elevação, ${variacao} (sem ajuste: recuperação de glicemia baixa)`; }
+                    else if (deltaHora > 80) { adjustment = 2; adjustmentMessage = `Ajuste (+2 UI/h): Aumento rápido, ${variacao}`; }
+                    else if (deltaHora > 40) { adjustment = 1; adjustmentMessage = `Ajuste (+1 UI/h): Em elevação, ${variacao}`; }
+                    else if (deltaHora < -80) { adjustment = -2; adjustmentMessage = `Ajuste (-2 UI/h): Queda rápida, ${variacao}`; }
+                    else if (deltaHora < -40) { adjustment = -1; adjustmentMessage = `Ajuste (-1 UI/h): Em queda, ${variacao}`; }
+                    else { adjustmentMessage = `Tendência estável, ${variacao}`; }
+                }
             }
 
             // 5. Bolus for significant hyperglycemia, only if glucose is not falling
             if (glicemiaAtual > 220) {
-                if (delta !== null && delta < 0) {
+                if (glicemiaAnterior !== null && glicemiaAtual < glicemiaAnterior) {
                     alert = { text: 'Glicemia elevada, porém em queda: bolus não indicado. Manter infusão e reavaliar em 1 h.', type: 'warning' };
                 } else {
                     if (glicemiaAtual <= 260) { bolus = 2; }
@@ -225,7 +241,7 @@
             // 6. Final rate
             const finalRate = Math.max(0, baseRate + adjustment);
 
-            return { rate: finalRate, bolus, alert, adjustmentMessage };
+            return { rate: finalRate, bolus, alert, adjustment, adjustmentMessage };
         }
 
         /**
@@ -246,8 +262,8 @@
 
             // Set color for adjustment message
             adjustmentInfoEl.classList.remove('text-green-600', 'text-red-600', 'text-gray-600');
-            if (result.adjustmentMessage.includes('+')) { adjustmentInfoEl.classList.add('text-red-600'); } 
-            else if (result.adjustmentMessage.includes('-')) { adjustmentInfoEl.classList.add('text-green-600'); } 
+            if (result.adjustment > 0) { adjustmentInfoEl.classList.add('text-red-600'); } 
+            else if (result.adjustment < 0) { adjustmentInfoEl.classList.add('text-green-600'); } 
             else { adjustmentInfoEl.classList.add('text-gray-600'); }
 
             // Reset and apply alert classes (hidden when there is no message)
@@ -292,9 +308,14 @@
                 displayError(`Glicemia ANTERIOR inválida. Informe um valor entre 1 e ${GLICEMIA_MAX} mg/dL ou deixe o campo em branco.`);
                 return;
             }
+            const intervaloValue = parseFloat(intervaloInput.value);
+            if (anteriorPreenchida && (isNaN(intervaloValue) || intervaloValue <= 0 || intervaloValue > 1440)) {
+                displayError('Informe o TEMPO desde a glicemia anterior, em minutos (1 a 1440).');
+                return;
+            }
 
             const selectedMode = document.querySelector('input[name="mode"]:checked').value;
-            const result = calculateInsulin(glicemiaAtualValue, glicemiaAnteriorValue, selectedMode);
+            const result = calculateInsulin(glicemiaAtualValue, glicemiaAnteriorValue, intervaloValue, selectedMode);
             displayResult(result);
         }
 
@@ -302,6 +323,7 @@
         calculateBtn.addEventListener('click', handleCalculation);
         glicemiaAtualInput.addEventListener('keydown', (e) => { if (e.key === 'Enter') handleCalculation(); });
         glicemiaAnteriorInput.addEventListener('keydown', (e) => { if (e.key === 'Enter') handleCalculation(); });
+        intervaloInput.addEventListener('keydown', (e) => { if (e.key === 'Enter') handleCalculation(); });
         protocolModeContainer.addEventListener('change', updateRadioSelection);
 
         // Initial setup
