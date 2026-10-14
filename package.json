@@ -1,0 +1,7 @@
+{
+  "name": "calculadora-insulina",
+  "private": true,
+  "scripts": {
+    "test": "node --test"
+  }
+}

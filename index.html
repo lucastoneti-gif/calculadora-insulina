@@ -115,6 +115,7 @@
     </div>
 
     <script>
+        // <calculo> Pure calculation logic (no DOM). Tested by tests/calculadora.test.js
         // Upper reading limit of most capillary glucose meters (mg/dL)
         const GLICEMIA_MAX = 600;
         // Hypoglycemia threshold (ADA level 1) and minimum glucose to keep IV insulin running
@@ -124,36 +125,6 @@
         const ALVO = { min: 140, max: 180 };
         // Trend is computed per hour, only for intervals between 30 min and 4 h
         const TENDENCIA_INTERVALO = { min: 30, max: 240 };
-
-        // DOM Element References
-        const glicemiaAtualInput = document.getElementById('glicemia-atual');
-        const glicemiaAnteriorInput = document.getElementById('glicemia-anterior');
-        const intervaloInput = document.getElementById('intervalo');
-        const calculateBtn = document.getElementById('calculate-btn');
-        const resultContainer = document.getElementById('result-container');
-        const infusionRateEl = document.getElementById('infusion-rate');
-        const bolusSection = document.getElementById('bolus-section');
-        const bolusDoseEl = document.getElementById('bolus-dose');
-        const adjustmentInfoEl = document.getElementById('adjustment-info');
-        const alertMessageEl = document.getElementById('alert-message');
-        const protocolModeContainer = document.getElementById('protocol-mode');
-        const radioLabels = protocolModeContainer.querySelectorAll('label');
-
-        /**
-         * Updates the visual state of the radio button labels to show which is selected.
-         */
-        function updateRadioSelection() {
-            const selectedRadio = document.querySelector('input[name="mode"]:checked');
-            radioLabels.forEach(label => {
-                if (label.htmlFor === selectedRadio.id) {
-                    label.classList.add('bg-white', 'text-blue-600', 'shadow');
-                    label.classList.remove('text-gray-600');
-                } else {
-                    label.classList.remove('bg-white', 'text-blue-600', 'shadow');
-                    label.classList.add('text-gray-600');
-                }
-            });
-        }
 
         /**
          * Calculates the insulin infusion rate and bolus based on blood glucose.
@@ -245,6 +216,63 @@
         }
 
         /**
+         * Parses and validates the raw input values.
+         * @returns {object} { erro } or { glicemiaAtual, glicemiaAnterior, intervaloMin }
+         */
+        function validarEntrada(atualTexto, anteriorTexto, intervaloTexto) {
+            const glicemiaAtual = parseFloat(atualTexto);
+            const anteriorPreenchida = anteriorTexto.trim() !== '';
+            const glicemiaAnterior = anteriorPreenchida ? parseFloat(anteriorTexto) : null;
+            const intervaloMin = anteriorPreenchida ? parseFloat(intervaloTexto) : null;
+
+            if (isNaN(glicemiaAtual) || glicemiaAtual <= 0) {
+                return { erro: 'Por favor, insira um valor de glicemia ATUAL válido.' };
+            }
+            if (glicemiaAtual > GLICEMIA_MAX) {
+                return { erro: `Glicemia ATUAL acima de ${GLICEMIA_MAX} mg/dL. Verifique a digitação; se o glicosímetro indicar "HI", confirmar com glicemia laboratorial.` };
+            }
+            if (anteriorPreenchida && (isNaN(glicemiaAnterior) || glicemiaAnterior <= 0 || glicemiaAnterior > GLICEMIA_MAX)) {
+                return { erro: `Glicemia ANTERIOR inválida. Informe um valor entre 1 e ${GLICEMIA_MAX} mg/dL ou deixe o campo em branco.` };
+            }
+            if (anteriorPreenchida && (isNaN(intervaloMin) || intervaloMin <= 0 || intervaloMin > 1440)) {
+                return { erro: 'Informe o TEMPO desde a glicemia anterior, em minutos (1 a 1440).' };
+            }
+            return { glicemiaAtual, glicemiaAnterior, intervaloMin };
+        }
+
+        // </calculo>
+
+        // DOM Element References
+        const glicemiaAtualInput = document.getElementById('glicemia-atual');
+        const glicemiaAnteriorInput = document.getElementById('glicemia-anterior');
+        const intervaloInput = document.getElementById('intervalo');
+        const calculateBtn = document.getElementById('calculate-btn');
+        const resultContainer = document.getElementById('result-container');
+        const infusionRateEl = document.getElementById('infusion-rate');
+        const bolusSection = document.getElementById('bolus-section');
+        const bolusDoseEl = document.getElementById('bolus-dose');
+        const adjustmentInfoEl = document.getElementById('adjustment-info');
+        const alertMessageEl = document.getElementById('alert-message');
+        const protocolModeContainer = document.getElementById('protocol-mode');
+        const radioLabels = protocolModeContainer.querySelectorAll('label');
+
+        /**
+         * Updates the visual state of the radio button labels to show which is selected.
+         */
+        function updateRadioSelection() {
+            const selectedRadio = document.querySelector('input[name="mode"]:checked');
+            radioLabels.forEach(label => {
+                if (label.htmlFor === selectedRadio.id) {
+                    label.classList.add('bg-white', 'text-blue-600', 'shadow');
+                    label.classList.remove('text-gray-600');
+                } else {
+                    label.classList.remove('bg-white', 'text-blue-600', 'shadow');
+                    label.classList.add('text-gray-600');
+                }
+            });
+        }
+
+        /**
          * Displays the calculation results in the UI.
          */
         function displayResult(result) {
@@ -292,30 +320,14 @@
         }
 
         function handleCalculation() {
-            const glicemiaAtualValue = parseFloat(glicemiaAtualInput.value);
-            const anteriorPreenchida = glicemiaAnteriorInput.value.trim() !== '';
-            const glicemiaAnteriorValue = anteriorPreenchida ? parseFloat(glicemiaAnteriorInput.value) : null;
-
-            if (isNaN(glicemiaAtualValue) || glicemiaAtualValue <= 0) {
-                displayError('Por favor, insira um valor de glicemia ATUAL válido.');
-                return;
-            }
-            if (glicemiaAtualValue > GLICEMIA_MAX) {
-                displayError(`Glicemia ATUAL acima de ${GLICEMIA_MAX} mg/dL. Verifique a digitação; se o glicosímetro indicar "HI", confirmar com glicemia laboratorial.`);
-                return;
-            }
-            if (anteriorPreenchida && (isNaN(glicemiaAnteriorValue) || glicemiaAnteriorValue <= 0 || glicemiaAnteriorValue > GLICEMIA_MAX)) {
-                displayError(`Glicemia ANTERIOR inválida. Informe um valor entre 1 e ${GLICEMIA_MAX} mg/dL ou deixe o campo em branco.`);
-                return;
-            }
-            const intervaloValue = parseFloat(intervaloInput.value);
-            if (anteriorPreenchida && (isNaN(intervaloValue) || intervaloValue <= 0 || intervaloValue > 1440)) {
-                displayError('Informe o TEMPO desde a glicemia anterior, em minutos (1 a 1440).');
+            const entrada = validarEntrada(glicemiaAtualInput.value, glicemiaAnteriorInput.value, intervaloInput.value);
+            if (entrada.erro) {
+                displayError(entrada.erro);
                 return;
             }
 
             const selectedMode = document.querySelector('input[name="mode"]:checked').value;
-            const result = calculateInsulin(glicemiaAtualValue, glicemiaAnteriorValue, intervaloValue, selectedMode);
+            const result = calculateInsulin(entrada.glicemiaAtual, entrada.glicemiaAnterior, entrada.intervaloMin, selectedMode);
             displayResult(result);
         }
 
